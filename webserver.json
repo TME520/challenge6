@@ -1,0 +1,367 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "This template deploys a standard Ento Data Science webserver.",
+  "Parameters": {
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Default": "ec2key",
+      "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+    },
+    "InstanceType": {
+      "Description": "WebServer EC2 instance type",
+      "Type": "String",
+      "Default": "t2.micro",
+      "AllowedValues": [
+        "t2.micro"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+    "AuthorizedIp": {
+      "Description": "Your external IP (aaa.bbb.ccc.ddd/32). Refer to https://ifconfig.me",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "AWSRegion": {
+      "Description": "AWS region in which the stack will be created.",
+      "Type": "String",
+      "Default": "ap-southeast-2"
+    }
+  },
+  "Mappings": {
+    "AWSInstanceType2Arch": {
+      "t2.micro": {
+        "Arch": "HVM64"
+      }
+    },
+    "AWSInstanceType2NATArch": {
+      "t2.micro": {
+        "Arch": "NATHVM64"
+      }
+    },
+    "AWSRegionArch2AMI": {
+      "ap-southeast-2": {
+        "PV64": "ami-63351d00",
+        "HVM64": "ami-05064bb33b40c33a2",
+        "HVMG2": "ami-0ad2db69"
+      }
+    },
+    "TrueOrFalseIndexMap": {
+      "false": {
+        "state": "0"
+      },
+      "true": {
+        "state": "1"
+      }
+    }
+  },
+  "Resources": {
+    "EC2Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "InstanceSecurityGroup"
+          }
+        ],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionArch2AMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            {
+              "Fn::FindInMap": [
+                "AWSInstanceType2Arch",
+                {
+                  "Ref": "InstanceType"
+                },
+                "Arch"
+              ]
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "created-by",
+            "Value": "TME520"
+          },
+          {
+            "Key": "expiry",
+            "Value": "never"
+          },
+          {
+            "Key": "purpose",
+            "Value": "This EC2 instance runs a standard Ento Data Science webserver."
+          },
+          {
+            "Key": "stack",
+            "Value": { "Ref": "AWS::StackName" }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64" : {
+            "Fn::Join" : [
+              "", [
+                "#!/bin/bash -xe\n",
+                "yum install -y aws-cfn-bootstrap\n",
+                "/opt/aws/bin/cfn-init ",
+                "         --stack ", { "Ref" : "AWS::StackName" },
+                "         --resource EC2Instance ",
+                "         --configsets EntoDataScienceWebserver ",
+                "         --region ", { "Ref" : "AWS::Region" }, "\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "EntoDataScienceWebserver": ["SetTZ", "AddYumRepositories","YumUpgrade","BasicSetup","PIP","Ruby","StartApacheHTTPD","ModifyDefaultIndexFile","StartMariaDB"]
+          },
+          "SetTZ": {
+            "files": {
+              "/etc/sysconfig/clock": {
+                "content": {
+                  "Fn::Join": [
+                    "", [
+                      "ZONE=\"Australia/Melbourne\"\n",
+                      "UTC=true"
+                    ]
+                  ]
+                }
+              }
+            },
+            "commands": {
+              "set_timezone": {
+                "command": "echo 'Setting timezone to Australia/Melbourne...' && ln -sf /usr/share/zoneinfo/Australia/Melbourne /etc/localtime"
+              }
+            }
+          },
+          "AddYumRepositories": {
+            "commands": {
+              "add_jenkins_repo": {
+                "command": "wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat/jenkins.repo && rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key && yum remove -y java-1.7.0-openjdk"
+              }
+            }
+          },
+          "YumUpgrade": {
+            "commands": {
+              "upgrade_yum_packages": {
+                "command": "yum update -y && yum upgrade -y"
+              }
+            }
+          },
+          "BasicSetup": {
+            "packages": {
+              "yum": {
+                "htop": [],
+                "git": [],
+                "python3-pip": [],
+                "httpd": [],
+                "mariadb-server": [],
+                "mariadb": [],
+                "gcc": [],
+                "system-rpm-config": []
+              }
+            },
+            "files": {
+              "/home/ec2-user/.cfn-init-run-check": {
+                "content": {
+                  "Fn::Join": [
+                    "", [
+                      "[general]\n",
+                      "Stack: ", { "Ref": "AWS::StackName" }, "\n",
+                      "Region: ", { "Ref": "AWS::Region" }, "\n"
+                    ]
+                  ]
+                },
+                "mode": "000644",
+                "user": "ec2-user",
+                "group": "ec2-user"
+              },
+              "/home/ec2-user/hello.py": {
+                "content": {
+                  "Fn::Join": [
+                    "", [
+                      "print('Yay! You’re on Rails!')"
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "PIP": {
+            "commands": {
+              "install_pip_modules": {
+                "command": {
+                  "Fn::Join": [
+                    "", [
+                      "pip-3 install sklearn pandas numpy nltk argparse boto3 colorama requests_toolbelt requests;"
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "Ruby": {
+            "commands": {
+              "install_ruby_on_rails": {
+                "command": {
+                  "Fn::Join": [
+                    "", [
+                      "echo 'start' > /tmp/install_ruby_on_rails;",
+                      "sudo amazon-linux-extras install ruby2.6;",
+                      "echo 'ruby 2.6 installed' >> /tmp/install_ruby_on_rails;",
+                      "sudo yum install -y ruby-devel;",
+                      "echo 'ruby-devel installed' >> /tmp/install_ruby_on_rails;",
+                      "sudo gem install rails;",
+                      "echo 'ruby on rails installed' >> /tmp/install_ruby_on_rails;"
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "StartApacheHTTPD": {
+            "commands": {
+              "start_apache_httpd": {
+                "command": {
+                  "Fn::Join": [
+                    "", [
+                      "sudo service httpd start;"
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "ModifyDefaultIndexFile": {
+            "commands": {
+              "modify_default_index_file": {
+                "command": {
+                  "Fn::Join": [
+                    "", [
+                      "sed -i 's,<h1>Test Page</h1>,<h1>Yay! You’re on Rails!</h1>,g' /usr/share/httpd/noindex/index.html;"
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "StartMariaDB": {
+            "commands": {
+              "start_mariadb": {
+                "command": {
+                  "Fn::Join": [
+                    "", [
+                      "sudo service mariadb start;"
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "InstanceSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable SSH access via port 22 and HTTP access via port 80.",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": { "Ref": "AuthorizedIp" }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": { "Ref": "AuthorizedIp" }
+          }
+        ],
+        "Tags": [
+          {
+            "Key" : "created-by",
+            "Value" : "TME520"
+          },
+          {
+            "Key" : "expiry",
+            "Value" : "never"
+          },
+          {
+            "Key" : "purpose",
+            "Value" : "Run a standard Ento Data Science webserver safely."
+          },
+          {
+            "Key": "stack",
+            "Value": { "Ref": "AWS::StackName" }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "InstanceId": {
+      "Description": "InstanceId of the newly created EC2 instance",
+      "Value": {
+        "Ref": "EC2Instance"
+      }
+    },
+    "AZ": {
+      "Description": "Availability Zone of the newly created EC2 instance",
+      "Value": {
+        "Fn::GetAtt": [
+          "EC2Instance",
+          "AvailabilityZone"
+        ]
+      }
+    },
+    "PublicDNS": {
+      "Description": "Public DNSName of the newly created EC2 instance",
+      "Value": { "Fn::GetAtt": [ "EC2Instance", "PublicDnsName" ] }
+    },
+    "PublicIP": {
+      "Description": "Public IP address of the newly created EC2 instance",
+      "Value": {
+        "Fn::GetAtt": [
+          "EC2Instance",
+          "PublicIp"
+        ]
+      }
+    },
+    "SSHConnectionShellCommand": {
+      "Description": "The command line you have to type in order to SSH into the EC2 instance (path to SSH key may vary).",
+      "Value": {
+        "Fn::Join": [ "", [ "", "ssh -v -i $HOME/.ssh/", { "Ref": "KeyName"}, ".pem ec2-user@", { "Fn::GetAtt": [ "EC2Instance", "PublicIp" ] } ] ]
+      }
+    },
+    "FQDNSSHConnectionShellCommand": {
+      "Description": "The command line you have to type in order to SSH into the EC2 instance (path to SSH key may vary).",
+      "Value": {
+        "Fn::Join": [ "", [ "", "ssh -v -i $HOME/.ssh/", { "Ref": "KeyName"}, ".pem ec2-user@", { "Fn::GetAtt": [ "EC2Instance", "PublicDnsName" ] } ] ]
+      }
+    },
+    "URL": {
+      "Description": "The URL pointing to your webserver",
+      "Value": {
+        "Fn::Join": [ "", [ "", "http://", { "Fn::GetAtt": [ "EC2Instance", "PublicIp" ] } ] ]
+      }
+    }
+  }
+}
+
